@@ -336,8 +336,8 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data)
       {
         int32 numPoints = paramQueue->getPointCount();
         int32 offsetSamples;
-        double value;
-        
+        ParamValue value;
+
         if (paramQueue->getPoint(numPoints - 1,  offsetSamples, value) == kResultTrue)
         {
           int idx = paramQueue->getParameterId();
@@ -360,6 +360,16 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data)
                 ENTER_PARAMS_MUTEX;
                 mPlug.GetParam(idx)->SetNormalized((double)value); // TODO: In VST3 non distributed the same parameter value is also set via IPlugVST3Controller::setParamNormalized(ParamID tag, ParamValue value)
                 mPlug.OnParamChange(idx, kHost, offsetSamples);
+
+                if (mPlug.GetParam(idx)->PrepareInterpolator())
+                {
+                  for (int32 pt = 0; pt < numPoints; pt++)
+                  {
+                    paramQueue->getPoint(pt, offsetSamples, value);
+                    mPlug.GetParam(idx)->AddInterpolationPointNormalized((double)offsetSamples, (double)value);
+                  }
+                }
+
                 LEAVE_PARAMS_MUTEX;
               }
             }

@@ -19,6 +19,8 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <vector>
+#include <mutex>
 
 #include "wdlstring.h"
 
@@ -30,7 +32,6 @@ BEGIN_IPLUG_NAMESPACE
 class IParam
 {
 public:
-
   /** Defines types or parameter. */
   enum EParamType { kTypeNone, kTypeBool, kTypeInt, kTypeEnum, kTypeDouble };
 
@@ -39,6 +40,9 @@ public:
 
   /** Used by AudioUnit plugins to determine the mapping of parameters */
   enum EDisplayType { kDisplayLinear, kDisplayLog, kDisplayExp, kDisplaySquared, kDisplaySquareRoot, kDisplayCubed, kDisplayCubeRoot };
+
+  /** Defines interpolation method for high resolution interpolation. */
+  enum EInterpolationMethod { kInterpolationNone, kInterpolationHold, kInterpolationLinear };
 
   /** Flags to determine characteristics of the parameter */
   enum EFlags
@@ -121,6 +125,92 @@ public:
     double mAdd = 1.0;
   };
 
+#pragma mark - InterpolationFunction
+  /** Basic interpolation */
+  class InterpolationFunction
+  {
+    public:
+      InterpolationFunction(EInterpolationMethod method): mMethod(method)
+      {
+        offsets.reserve(16);
+        values.reserve(16);
+      }
+
+      InterpolationFunction(const InterpolationFunction&) = delete;
+      InterpolationFunction(const InterpolationFunction&&) = delete;
+      InterpolationFunction& operator=(const InterpolationFunction&) = delete;
+
+      void NextBlock()
+      {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (values.size() > 0)
+        {
+          auto lastValue = values.back();
+          Clear();
+          offsets.push_back(0.0);
+          values.push_back(lastValue);
+        } else Clear();
+      }
+
+      void Clear()
+      {
+        offsets.clear();
+        values.clear();
+      }
+
+      void AddPoint(double offset, double value)
+      {
+        std::lock_guard<std::mutex> lock(mMutex);
+        offsets.push_back(offset);
+        values.push_back(value);
+      }
+
+      inline double Value(int offset) const noexcept
+      {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (offsets.size() == 0) return 1.0;
+
+        auto i = 0;
+        while ((offset > offsets[i]) && (i < offsets.size())) i++;
+
+        auto iPrev = i-1;
+        if (i == 0) return values[0];
+        if (i == offsets.size()) return values.back();
+
+        auto xPrev = values[iPrev];
+        switch(mMethod)
+        {
+          case kInterpolationHold:
+          {
+            return xPrev;
+          }
+
+          case kInterpolationLinear:
+          {
+            const auto x = values[i];
+            const auto t = offsets[i];
+            const auto tPrev = offsets[iPrev];
+
+            const auto xdiff = (t - tPrev);
+
+            if (xdiff > 0)
+            {
+              return xPrev + (static_cast<double>(offset) - tPrev) * (x - xPrev) / (t - tPrev);
+            } else return x;
+          }
+
+          default:
+            return 0.0;
+        };
+      }
+
+    private:
+      const EInterpolationMethod mMethod;
+
+      mutable std::mutex mMutex;
+      std::vector<double> offsets;
+      std::vector<double> values;
+  };
 #pragma mark -
 
   IParam();
@@ -304,6 +394,8 @@ public:
    * @return Current value of the parameter */
   double Value() const { return mValue.load(); }
 
+  double Value(int offset) { if (mInterpolationFunction) return mInterpolationFunction->Value(offset); else return Value(); }
+
   /** Returns the parameter's value as a boolean
    * @return \c true if value >= 0.5, else otherwise */
   bool Bool() const { return (mValue.load() >= 0.5); }
@@ -439,7 +531,24 @@ public:
   /** /todo 
    * @return false /todo */
   bool GetMeta() const { return mFlags & kFlagMeta; }
- 
+
+  /** /todo
+   * @return /todo */
+  void SetInterpolationMethod(EInterpolationMethod interpolationMethod=kInterpolationLinear) {
+    mInterpolationFunction = std::make_unique<InterpolationFunction>(interpolationMethod);
+  }
+
+  void AddInterpolationPointNormalized(int offset, double value) {
+    mInterpolationFunction->AddPoint(offset, FromNormalized(value));
+  }
+
+  bool PrepareInterpolator() {
+    if (mInterpolationFunction) {
+      mInterpolationFunction->NextBlock();
+      return true;
+    } else return false;
+  };
+
   /** /todo 
    * @param json /todo
    * @param idx /todo */
@@ -457,6 +566,7 @@ private:
 
   EParamType mType = kTypeNone;
   EParamUnit mUnit = kUnitCustom;
+
   std::atomic<double> mValue{0.0};
   double mMin = 0.0;
   double mMax = 1.0;
@@ -470,6 +580,7 @@ private:
   char mParamGroup[MAX_PARAM_GROUP_LEN];
   
   std::unique_ptr<Shape> mShape;
+  std::unique_ptr<InterpolationFunction> mInterpolationFunction;
   DisplayFunc mDisplayFunction = nullptr;
 
   WDL_TypedBuf<DisplayText> mDisplayTexts;
