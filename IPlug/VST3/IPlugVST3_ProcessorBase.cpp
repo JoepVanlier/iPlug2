@@ -358,9 +358,9 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data)
               if (idx >= 0 && idx < mPlug.NParams())
               {
                 ENTER_PARAMS_MUTEX;
-                mPlug.GetParam(idx)->SetNormalized((double)value); // TODO: In VST3 non distributed the same parameter value is also set via IPlugVST3Controller::setParamNormalized(ParamID tag, ParamValue value)
                 mPlug.OnParamChange(idx, kHost, offsetSamples);
 
+                // Do we have an interpolator active which can deal with subsample accuracy?
                 if (mPlug.GetParam(idx)->PrepareInterpolator())
                 {
                   for (int32 pt = 0; pt < numPoints; pt++)
@@ -368,6 +368,9 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data)
                     paramQueue->getPoint(pt, offsetSamples, value);
                     mPlug.GetParam(idx)->AddInterpolationPointNormalized((double)offsetSamples, (double)value);
                   }
+                } else {
+                  // If not, just set it!
+                  mPlug.GetParam(idx)->SetNormalized((double)value); // TODO: In VST3 non distributed the same parameter value is also set via IPlugVST3Controller::setParamNormalized(ParamID tag, ParamValue value)
                 }
 
                 LEAVE_PARAMS_MUTEX;

@@ -143,17 +143,6 @@ public:
       void NextBlock()
       {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (values.size() > 0)
-        {
-          auto lastValue = values.back();
-          Clear();
-          offsets.push_back(0.0);
-          values.push_back(lastValue);
-        } else Clear();
-      }
-
-      void Clear()
-      {
         offsets.clear();
         values.clear();
       }
@@ -165,11 +154,15 @@ public:
         values.push_back(value);
       }
 
+      bool Active() const
+      {
+        std::lock_guard<std::mutex> lock(mMutex);
+        return offsets.size() > 1;
+      }
+
       inline double Value(int offset) const noexcept
       {
         std::lock_guard<std::mutex> lock(mMutex);
-        if (offsets.size() == 0) return 1.0;
-
         auto i = 0;
         while ((offset > offsets[i]) && (i < offsets.size())) i++;
 
@@ -392,9 +385,10 @@ public:
 
   /** Gets a readable value of the parameter
    * @return Current value of the parameter */
-  double Value() const { return mValue.load(); }
+  inline double Value() const { return mValue.load(); }
 
-  double Value(int offset) { if (mInterpolationFunction) return mInterpolationFunction->Value(offset); else return Value(); }
+  //double Value(int offset) { if (mInterpolationFunction) return mInterpolationFunction->Value(offset); else return Value(); }
+  inline double Value(int offset) { if (mInterpolationFunction && mInterpolationFunction->Active()) Set(mInterpolationFunction->Value(offset)); return Value(); }
 
   /** Returns the parameter's value as a boolean
    * @return \c true if value >= 0.5, else otherwise */
