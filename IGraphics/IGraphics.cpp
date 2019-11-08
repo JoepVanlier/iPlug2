@@ -10,6 +10,7 @@
 
 #include "IGraphics.h"
 
+#define IGRAPHICS_NO_CONTEXT_MENU
 #define NANOSVG_IMPLEMENTATION
 #include "nanosvg.h"
 
